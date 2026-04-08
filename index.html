@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<title>Run HUD Compact - Dynamic Progress</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="data.js"></script>
+<style>
+:root {
+  --bg: #fadc96;
+  --neon: #000000;
+  --neon2: #000000;
+  --neon3: #000000;
+  --neon4: #000000;
+  --text: #000000;
+  --card-w: 250px;
+  --card-h: 280px;
+  --zoom-stats: 1.3;
+  --font-main: "Arial Narrow", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-main);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  overflow: hidden;
+}
+.dashboard {
+  display: grid;
+  grid-template-columns: repeat(4, var(--card-w));
+  grid-template-rows: repeat(2, var(--card-h));
+  gap: 6px;
+}
+.card {
+  width: var(--card-w);
+  height: var(--card-h);
+  border: 1px solid var(--neon);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--neon), transparent 98%);
+  position: relative;
+  overflow: hidden;
+}
+.card h3 {
+  font-family: var(--font-main);
+  font-size: 11px;
+  margin: 0 0 2px 0;
+  color: var(--neon);
+  text-align: center;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+.chart-container { flex: 1; position: relative; min-height: 0; }
+canvas { width: 100% !important; height: 100% !important; pointer-events: none; }
+#stabilityBadge {
+  position: absolute;
+  top: 13px; left: 50%; transform: translateX(-50%);
+  color: var(--neon2); font-weight: bold; font-size: calc(10px * var(--zoom-stats)); z-index: 10;
+}
+.card.stats { align-items: center; justify-content: center; gap: calc(4px * var(--zoom-stats)); padding-top: 4px; }
+.stat-label { font-size: calc(12px * var(--zoom-stats)); color: var(--neon2); font-weight: bold; letter-spacing: 2px; }
+.stat-value { font-size: calc(14px * var(--zoom-stats)); color: var(--neon4); line-height: 1.1; }
+.stat-sub { font-size: calc(14px * var(--zoom-stats)); color: var(--text); line-height: 1.3; }
+.stat-sub.highlight { color: var(--neon3); font-size: calc(13px * var(--zoom-stats)); }
+.stat-divider { width: 80%; height: 1px; background: color-mix(in srgb, var(--neon), transparent 85%); margin: 3px 0; }
+.card.viewer { justify-content: space-between; }
+.viewer-data { display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: 6px; }
+.splits-container {
+  width: 75%; margin: 4px auto 0 auto; overflow-y: auto; flex: 1; min-height: 0;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--neon), transparent 70%) transparent;
+}
+.splits-container::-webkit-scrollbar { width: 3px; }
+.split-row {
+  display: flex; justify-content: space-between; padding: 2px 6px;
+  font-size: calc(9px * var(--zoom-stats)); color: color-mix(in srgb, var(--text), transparent 40%);
+  border-top: 1px solid color-mix(in srgb, var(--neon), transparent 92%);
+}
+.split-row .split-label { color: var(--neon); }
+.split-row .split-pace  { color: var(--neon); font-weight: bold; }
+.viewer-controls { display: flex; flex-direction: column; padding: 3px 0 2px 0; }
+.run-selector { display: flex; justify-content: center; align-items: center; gap: 30px; }
+.run-selector button { padding: 3px 10px; font-size: 11px; background: none; border: 1px solid var(--neon); color: var(--neon); cursor: pointer; }
+.run-number { text-align: center; font-size: 15px; color: var(--neon2); min-width: 60px; }
+.histo-row { display: flex; justify-content: space-between; width: 70%; font-size: calc(11px * var(--zoom-stats)); margin: 2px 0; }
+.histo-key { color: var(--neon2); }
+.histo-value { color: var(--neon); font-weight: bold; }
+.chart-legend { 
+  position: absolute; 
+  top: 2px; 
+  left: 50%; 
+  transform: translateX(-50%); 
+  display: flex; 
+  gap: 8px; 
+  font-size: 9px; 
+  z-index: 10; 
+  white-space: nowrap; 
+}
+.legend-item { display: flex; align-items: center; gap: 3px; }
+.legend-line {
+  width: 18px;
+  height: 0;
+  display: inline-block;
+  border-top-width: 2px;
+  border-top-style: solid;
+}
+.legend-line.dashed { border-top-style: dashed; }
+</style>
+</head>
+<body>
+
+<div class="dashboard">
+  <div class="card">
+    <h3>y : SPEED [KM/H] | RUN PROG. [%] : x</h3>
+    <div class="chart-container">
+      <div id="stabilityBadge">STABILITY : --%</div>
+      <canvas id="speedChart"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>y : PACE [MN'SS" / KM] | DATE : x</h3>
+    <div class="chart-container"><canvas id="paceChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h3>y : DIST% | TIME% : x</h3>
+    <div class="chart-container">
+      <div class="chart-legend">
+        <span class="legend-item"><span class="legend-line" style="border-color:var(--neon4);"></span><span style="color:var(--neon4)">RUN</span></span>
+        <span class="legend-item"><span class="legend-line dashed" style="border-color:var(--neon3);"></span><span style="color:var(--neon3)">REF.</span></span>
+      </div>
+      <canvas id="finishDistChart"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>y : FINISH TIME% | LAST KM : x</h3>
+    <div class="chart-container">
+      <div class="chart-legend">
+        <span class="legend-item"><span class="legend-line" style="border-color:var(--neon4);"></span><span style="color:var(--neon4)">RUN</span></span>
+        <span class="legend-item"><span class="legend-line dashed" style="border-color:var(--neon3);"></span><span style="color:var(--neon3)">BEST</span></span>
+      </div>
+      <canvas id="finishTimeChart"></canvas>
+    </div>
+  </div>
+
+  <div class="card viewer">
+    <div class="viewer-data" id="viewerStatic"></div>
+    <div class="splits-container" id="splitsContainer"></div>
+    <div class="viewer-controls">
+      <div class="run-selector">
+        <button onclick="prev()">◀</button>
+        <span class="run-number" id="runNumber">—/—</span>
+        <button onclick="next()">▶</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card stats" id="histo">
+    <div class="stat-label">HISTORY</div>
+    <div class="stat-divider"></div>
+    <div class="histo-row"><span class="histo-key">RUNS</span><span class="histo-value" id="histoSessions">—</span></div>
+    <div class="histo-row"><span class="histo-key">KM TOTAL</span><span class="histo-value" id="histoKm">—</span></div>
+    <div class="histo-row"><span class="histo-key">CALORIES</span><span class="histo-value" id="histoCal">—</span></div>
+    <div class="stat-divider"></div>
+    <div class="histo-row"><span class="histo-key">BEST PACE</span><span class="histo-value" id="histoMin">—</span></div>
+    <div class="histo-row"><span class="histo-key">WORST PACE</span><span class="histo-value" id="histoMax">—</span></div>
+  </div>
+
+  <div class="card stats" id="best">
+    <div class="stat-label">BEST</div>
+    <div class="stat-value" id="bestPace">—</div>
+    <div class="stat-sub" id="bestDist">— km</div>
+    <div class="stat-sub highlight" id="bestDuration">—</div>
+    <div class="stat-sub" id="bestDate">—</div>
+  </div>
+
+  <div class="card stats" id="avg">
+    <div class="stat-label">AVERAGE</div>
+    <div class="stat-value" id="avgPace">—</div>
+    <div class="stat-sub" id="avgDist">— km</div>
+    <div class="stat-sub highlight" id="avgDuration">—</div>
+    <div class="stat-sub" id="avgCal">— cal</div>
+  </div>
+</div>
+
+<script>
+let runs = [];
+let paceChart, speedChart, finishDistChart, finishTimeChart;
+let index = 0;
+
+const getVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const getAlphaVar = (n, a) => {
+  const h = getVar(n);
+  const r = parseInt(h.slice(1,3),16), g = parseInt(h.slice(3,5),16), b = parseInt(h.slice(5,7),16);
+  return `rgba(${r},${g},${b},${a})`;
+};
+
+window.onload = () => {
+  if (typeof runsData !== 'undefined') {
+    runs = runsData;
+    runs.sort((a,b) => new Date(a.date) - new Date(b.date));
+    index = runs.length - 1;
+    initPaceChart(); initSpeedChart(); initFinishDistChart(); initFinishTimeChart();
+    updateViewer(); updateHisto();
+  }
+};
+
+function formatPace(p) {
+  const m = Math.floor(p), s = Math.round((p-m)*60);
+  return `${m}'${s.toString().padStart(2,'0')}"`;
+}
+function formatDuration(secs) {
+  const m = Math.floor(secs/60), s = Math.round(secs%60);
+  return `${m}'${s.toString().padStart(2,'0')}"`;
+}
+function avg(key) { return runs.reduce((a,b) => a+b[key], 0) / runs.length; }
+function best()   { return runs.reduce((a,b) => b.pace < a.pace ? b : a); }
+
+function linearRegression(data) {
+  const n=data.length, x=data.map((_,i)=>i), y=data.map(r=>r.pace);
+  const sx=x.reduce((a,b)=>a+b,0), sy=y.reduce((a,b)=>a+b,0);
+  const sxy=x.reduce((a,b,i)=>a+b*y[i],0), sxx=x.reduce((a,b)=>a+b*b,0);
+  const a=(n*sxy-sx*sy)/(n*sxx-sx*sx), bv=(sy-a*sx)/n;
+  return x.map(v=>a*v+bv);
+}
+
+function calculateStability(run) {
+  const dist = run.extDist || [];
+  if (dist.length < 10) return "---";
+  let speeds = [];
+  for (let i=1; i<dist.length; i++) speeds.push((dist[i]-dist[i-1])*360);
+  const clean = speeds.slice(Math.floor(speeds.length*0.10));
+  if (!clean.length) return "---";
+  const mean = clean.reduce((a,b)=>a+b,0)/clean.length;
+  const variance = clean.reduce((a,b)=>a+Math.pow(b-mean,2),0)/clean.length;
+  return Math.max(0, Math.min(100, Math.round(100-(Math.sqrt(variance)/mean*100*2))));
+}
+
+function buildSplits(raw) {
+  if (!raw || !raw.length) return [];
+  const splits = [...raw];
+  const last = splits[splits.length-1];
+  if (last.partial && splits.length >= 2) {
+    const prev = splits[splits.length-2];
+    const combinedDist = (prev.partialMeters ? prev.partialMeters/1000 : 1.0) + last.partialMeters/1000;
+    const combinedDur  = (prev.durSec||0) + (last.durSec||0);
+    const combinedPace = combinedDur>0 ? (combinedDur/60)/combinedDist : last.pace;
+    splits[splits.length-2] = { ...prev, pace:combinedPace, extraMeters:last.partialMeters };
+    splits.pop();
+  }
+  return splits;
+}
+
+function getProgressData(run) {
+  const dists = run.extDist || [];
+  if (dists.length < 10) return null;
+  const totalDist = run.distance;
+  const totalSteps = dists.length - 1;
+  const timeSteps = [50, 60, 70, 80, 90, 100];
+  const runProgress = timeSteps.map(tPct => {
+    const idx = Math.round((tPct / 100) * totalSteps);
+    return parseFloat(((dists[idx] / totalDist) * 100).toFixed(2));
+  });
+  return { labels: timeSteps.map(s => s + '%'), data: runProgress, ref: timeSteps };
+}
+
+function getFinishTimeData(run) {
+  const dist = run.extDist || [];
+  if (dist.length < 2) return null;
+  const totalDist = run.distance, totalDur = run.duration;
+  return [1.0,0.9,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.1].map(kmBack => {
+    const target = totalDist - kmBack;
+    if (target <= 0) return null;
+    let idx = dist.findIndex(d => d >= target);
+    if (idx < 0) idx = dist.length - 1;
+    return parseFloat(((idx * 10 / totalDur) * 100).toFixed(1));
+  });
+}
+
+function getAvgFinishTimeData() {
+  const all = runs.map(r => getFinishTimeData(r)).filter(Boolean);
+  if (!all.length) return null;
+  return all[0].map((_, i) => {
+    const vals = all.map(d => d[i]).filter(v => v !== null);
+    return vals.length ? parseFloat((vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(1)) : null;
+  });
+}
+
+function initPaceChart() {
+  const bestRun = best(), paces = runs.map(r=>r.pace);
+  const minPace = Math.max(0, Math.floor(Math.min(...paces)*2)/2-0.5);
+  const maxPace = Math.ceil(Math.max(...paces)*2)/2+0.5;
+  const fontVar = getVar('--font-main'), ctx = document.getElementById('paceChart').getContext('2d');
+  if (paceChart) paceChart.destroy();
+  paceChart = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels: runs.map(r=>new Date(r.date)),
+      datasets:[
+        { label:'Pace', data:paces, borderColor:getVar('--neon'), borderWidth:1.5, pointRadius:1, fill:false },
+        { label:'Trend', data:linearRegression(runs), borderColor:getVar('--neon2'), borderWidth:1.5, borderDash:[4,2], pointRadius:0, fill:false },
+        { label:'Best', data:runs.map(r=>r===bestRun?r.pace:null), borderColor:getVar('--neon3'), backgroundColor:getAlphaVar('--neon3',0.4), pointRadius:5, showLine:false },
+        { label:'Selected', data:runs.map((r,i)=>i===index?r.pace:null), borderColor:getVar('--neon2'), backgroundColor:getAlphaVar('--neon2',0.4), pointRadius:7, showLine:false }
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{display:false}, tooltip:{enabled:false} },
+      scales:{
+        x:{ grid:{color:getAlphaVar('--neon',0.2)}, ticks:{ color:ctx=>ctx.index===index?getVar('--neon2'):getVar('--neon'), font:ctx=>ctx.index===index?{family:fontVar,size:11,weight:'bold'}:{family:fontVar,size:11}, maxRotation:0, callback:function(val,i){ const d=new Date(runs[i].date); return [d.getDate().toString().padStart(2,'0'),(d.getMonth()+1).toString().padStart(2,'0'),d.getFullYear().toString().slice(-2)]; } }, border:{color:getVar('--neon')} },
+        y:{ min:minPace, max:maxPace, grid:{color:getAlphaVar('--neon',0.1)}, ticks:{ color:getVar('--neon'), font:{family:fontVar,size:11}, stepSize:0.5, callback:v=>formatPace(v) }, border:{color:getVar('--neon')} }
+      }
+    }
+  });
+}
+
+function initSpeedChart() {
+  const fontVar = getVar('--font-main'), ctx = document.getElementById('speedChart').getContext('2d');
+  if (speedChart) speedChart.destroy();
+  speedChart = new Chart(ctx, {
+    type:'line',
+    data:{ datasets:[{ label:'km/h', data:[], borderColor:getVar('--neon2'), borderWidth:1, pointRadius:0, fill:true, backgroundColor:getAlphaVar('--neon2',0.07), tension:0.3 }] },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{display:false}, tooltip:{enabled:false} },
+      scales:{
+        x:{ type:'linear', min:0, max:100, grid:{color:getAlphaVar('--neon',0.1)}, ticks:{color:getVar('--neon'),font:{family:fontVar,size:10}}, border:{color:getVar('--neon')} },
+        y:{ min:0, max:20, grid:{color:getAlphaVar('--neon',0.1)}, ticks:{color:getVar('--neon'),font:{family:fontVar,size:10}}, border:{color:getVar('--neon')} }
+      }
+    }
+  });
+}
+
+function initFinishDistChart() {
+  const fontVar = getVar('--font-main'), ctx = document.getElementById('finishDistChart').getContext('2d');
+  if (finishDistChart) finishDistChart.destroy();
+  finishDistChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: ['50%', '60%', '70%', '80%', '90%', '100%'],
+      datasets: [
+        { label:'Run', data:[], borderColor:getVar('--neon4'), borderWidth:1.5, fill:false, pointRadius:0, tension:0.2 },
+        { label:'Ref', data:[50,60,70,80,90,100], borderColor:getAlphaVar('--neon3',1), borderWidth:1.5, borderDash:[5,5], fill:false, pointRadius:0 }
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{display:false}, tooltip:{enabled:false} },
+      scales:{
+        x:{ type:'category', grid:{color:getAlphaVar('--neon',0.1)}, border:{color:getVar('--neon')}, ticks:{color:getVar('--neon'),font:{family:fontVar,size:10},maxRotation:90,minRotation:90,autoSkip:false} },
+        y:{ min:50, max:100, grid:{color:getAlphaVar('--neon',0.1)}, border:{color:getVar('--neon')}, ticks:{color:getVar('--neon'),font:{family:fontVar,size:10},stepSize:10,callback:v=>v+'%'} }
+      }
+    }
+  });
+}
+
+function initFinishTimeChart() {
+  const fontVar = getVar('--font-main'), ctx = document.getElementById('finishTimeChart').getContext('2d');
+  if (finishTimeChart) finishTimeChart.destroy();
+  finishTimeChart = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels:['-900m','-800m','-700m','-600m','-500m','-400m','-300m','-200m','-100m','FINISH'],
+      datasets:[
+        { label:'Run',  data:[], borderColor:getVar('--neon4'), borderWidth:1.5, fill:false, stepped:true, pointRadius:0 },
+        { label:'Best', data:[], borderColor:getVar('--neon3'), borderWidth:1.5, borderDash:[4,2], fill:false, stepped:true, pointRadius:0 },
+        { label:'Avg',  data:[], borderColor:'transparent', borderWidth:1, borderDash:[4,2], fill:false, stepped:true, pointRadius:0 }
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{
+        legend:{display:false}, tooltip:{enabled:false},
+        beforeDraw:(chart)=>{
+          const {ctx,chartArea:{top,left}}=chart; ctx.save();
+          ctx.fillStyle=getAlphaVar('--neon',0.6); ctx.font=`italic 9px ${fontVar}`;
+          ctx.fillText('IN HUNDREDS OF METERS',left+5,top+12); ctx.restore();
+        }
+      },
+      scales:{
+        x:{ grid:{color:getAlphaVar('--neon',0.1)}, ticks:{color:getVar('--neon'),maxRotation:90,minRotation:90,font:{family:fontVar,size:10}}, border:{color:getVar('--neon')} },
+        y:{ min:30, max:100, grid:{color:getAlphaVar('--neon',0.1)}, ticks:{color:getVar('--neon'),font:{family:fontVar,size:10},stepSize:10,callback:v=>v+'%'}, border:{color:getVar('--neon')} }
+      }
+    }
+  });
+}
+
+function updateSpeedChart() {
+  if (!speedChart || !runs.length) return;
+  const r = runs[index], dist = r.extDist || [];
+  if (dist.length < 2) return;
+  const total = dist.length - 1;
+  speedChart.data.datasets[0].data = dist.slice(1).map((d,i) => ({ x:((i+1)/total)*100, y:parseFloat(((d-dist[i])*360).toFixed(2)) }));
+  speedChart.update();
+}
+
+function updateFinishDistChart() {
+  if (!finishDistChart || !runs.length) return;
+  const prog = getProgressData(runs[index]);
+  if (!prog) return;
+  finishDistChart.data.datasets[0].data = prog.data;
+  finishDistChart.update();
+}
+
+function updateFinishTimeChart() {
+  if (!finishTimeChart || !runs.length) return;
+  const runData = getFinishTimeData(runs[index]), b = best();
+  const bestData = getFinishTimeData(b), avgData = getAvgFinishTimeData();
+  if (!runData) return;
+  finishTimeChart.data.datasets[0].data = runData;
+  finishTimeChart.data.datasets[1].data = bestData || [];
+  finishTimeChart.data.datasets[2].data = avgData  || [];
+  finishTimeChart.update();
+}
+
+function updateViewer() {
+  if (!runs.length) return;
+  const r = runs[index];
+  document.getElementById('stabilityBadge').textContent = `STABILITY : ${calculateStability(r)}%`;
+  document.getElementById('viewerStatic').innerHTML = `
+    <div class="stat-label">&nbsp;</div>
+    <div class="stat-value">${formatPace(r.pace)}</div>
+    <div class="stat-sub">${r.distance.toFixed(2)} km &nbsp; ► ${r.calories} cal</div>
+    <div class="stat-sub highlight">${r.durationStr || formatDuration(r.duration)}</div>
+    <div class="stat-sub">${new Date(r.date).toLocaleDateString()}</div>`;
+  const mergedSplits = buildSplits(r.kmSplits);
+  document.getElementById('splitsContainer').innerHTML = mergedSplits.map(split => {
+    const extra = split.extraMeters ? ` <span style="font-size:calc(10px * var(--zoom-stats));opacity:1;">(+${split.extraMeters}m)</span>` : '';
+    return `<div class="split-row"><span class="split-label">${split.num}° km${extra}</span><span class="split-pace">${formatPace(split.pace)}</span></div>`;
+  }).join('');
+  document.getElementById('runNumber').textContent = `${index+1} / ${runs.length}`;
+  const b = best();
+  document.getElementById('bestPace').textContent    = formatPace(b.pace);
+  document.getElementById('bestDist').textContent    = b.distance.toFixed(2) + ' km';
+  document.getElementById('bestDuration').textContent = b.durationStr || formatDuration(b.duration);
+  document.getElementById('bestDate').textContent    = new Date(b.date).toLocaleDateString();
+  document.getElementById('avgPace').textContent     = formatPace(avg('pace'));
+  document.getElementById('avgDist').textContent     = avg('distance').toFixed(2) + ' km';
+  document.getElementById('avgDuration').textContent = formatDuration(avg('duration'));
+  document.getElementById('avgCal').textContent      = avg('calories').toFixed(0) + ' cal';
+  if (paceChart) {
+    paceChart.data.datasets[3].data = runs.map((v,i) => i===index ? v.pace : null);
+    paceChart.options.scales.x.ticks.color = ctx => ctx.index===index ? getVar('--neon2') : getVar('--neon');
+    paceChart.options.scales.x.ticks.font  = ctx => ctx.index===index
+      ? { family:getVar('--font-main'), size:11, weight:'bold' }
+      : { family:getVar('--font-main'), size:11 };
+    paceChart.update();
+  }
+  updateSpeedChart(); updateFinishDistChart(); updateFinishTimeChart();
+}
+
+function updateHisto() {
+  if (!runs.length) return;
+  document.getElementById('histoSessions').textContent = runs.length;
+  document.getElementById('histoKm').textContent  = runs.reduce((a,b)=>a+b.distance,0).toFixed(1)+' km';
+  document.getElementById('histoCal').textContent = runs.reduce((a,b)=>a+b.calories,0)+' cal';
+  document.getElementById('histoMin').textContent = formatPace(Math.min(...runs.map(r=>r.pace)));
+  document.getElementById('histoMax').textContent = formatPace(Math.max(...runs.map(r=>r.pace)));
+}
+function next() { if (runs.length) { index=(index+1)%runs.length; updateViewer(); } }
+function prev() { if (runs.length) { index=(index-1+runs.length)%runs.length; updateViewer(); } }
+</script>
+</body>
+</html>
